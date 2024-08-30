@@ -3549,8 +3549,14 @@ int wxAuiNotebook::DoModifySelection(size_t n, bool events)
                 if (pane.name == wxT("dummy"))
                     continue;
                 wxAuiTabCtrl* tabctrl = ((wxTabFrame*)pane.window)->m_tabs;
-                if (tabctrl != ctrl)
+                if (tabctrl != ctrl) {
                     tabctrl->SetSelectedFont(m_normalFont);
+                    // mark the pages in the non-active tabCtrl as non-active
+                    wxAuiNotebookPageArray& tabs = tabctrl->GetPages();
+                    for (wxAuiNotebookPage& tab : tabs) {
+                        tab.active = false;
+                    }
+                }
                 else
                     tabctrl->SetSelectedFont(m_selectedFont);
                 tabctrl->Refresh();
