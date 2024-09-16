@@ -1620,6 +1620,257 @@ bool wxAuiNotebook::Create(wxWindow* parent,
     return true;
 }
 
+wxString wxAuiNotebook::SavePerspective()
+{
+    // Build list of panes/tabs
+    wxString tabs;
+    wxAuiPaneInfoArray& all_panes = m_mgr.GetAllPanes();
+    const size_t pane_count = all_panes.GetCount();
+
+    for (size_t i = 0; i < pane_count; ++i)
+    {
+        wxAuiPaneInfo& pane = all_panes.Item(i);
+        if (pane.name == "dummy")
+            continue; // don't save the dummy tab
+
+        wxTabFrame* tabframe = (wxTabFrame*)pane.window;
+
+        // add a separator if there are already saved tabs, then add the pane name
+        if (!tabs.empty()) tabs += "|";
+        tabs += pane.name;
+        tabs += "=";
+
+        // add tab indices and active/selected indicators
+        auto& container = tabframe->m_tabs->GetPages();
+        size_t page_count = container.size();
+        for (size_t p = 0; p < page_count; p++)
+        {
+            wxAuiNotebookPage& page = container[p];
+            const size_t page_idx = m_tabs.GetIdxFromWindow(page.window);
+
+            if (p != 0) tabs += wxT(",");
+
+            if ((int)page_idx == m_curPage) tabs += wxT("*");
+            // don't save information about the active page - we only care about the selected (current) page.
+            //else if ((int)p == m_tabs.GetActivePage()) tabs += wxT("+");
+            tabs += wxString::Format("%d", (int)page_idx);
+        }
+    }
+    tabs += wxT("@");
+
+    // Add frame perspective
+    tabs += m_mgr.SavePerspective();
+
+    return tabs;
+}
+
+
+// This is really just a copy of the relevant parts of wxAuiManager's code.
+std::vector<wxAuiPaneInfo> wxAuiNotebook::GetPaneInfo(const wxString& layout)
+{
+    wxString input = layout.AfterFirst(wxT('@'));
+    std::vector<wxAuiPaneInfo> result;
+    wxString part;
+    // check layout string version
+    //    'layout1' = wxAUI 0.9.0 - wxAUI 0.9.2
+    //    'layout2' = wxAUI 0.9.2 (wxWidgets 2.8)
+    part = input.BeforeFirst(wxT('|'));
+    input = input.AfterFirst(wxT('|'));
+    part.Trim(true);
+    part.Trim(false);
+    if (part != wxT("layout2"))
+        return result;
+
+    // Disabled for notebook, not clear if it's needed.
+    // clear out the dock array; this will be reconstructed
+    //m_docks.Clear();
+
+    // replace escaped characters so we can
+    // split up the string easily
+    input.Replace(wxT("\\|"), wxT("\a"));
+    input.Replace(wxT("\\;"), wxT("\b"));
+
+    // Disabled for notebook, not clear if it's needed.
+    //m_hasMaximized = false;
+    while (1)
+    {
+        wxAuiPaneInfo pane;
+
+        wxString pane_part = input.BeforeFirst(wxT('|'));
+        input = input.AfterFirst(wxT('|'));
+        pane_part.Trim(true);
+
+        // if the string is empty, we're done parsing
+        if (pane_part.empty())
+            break;
+
+        if (pane_part.Left(9) == wxT("dock_size"))
+        {
+            wxString val_name = pane_part.BeforeFirst(wxT('='));
+            wxString value = pane_part.AfterFirst(wxT('='));
+
+            long dir, layer, row, size;
+            wxString piece = val_name.AfterFirst(wxT('('));
+            piece = piece.BeforeLast(wxT(')'));
+            piece.BeforeFirst(wxT(',')).ToLong(&dir);
+            piece = piece.AfterFirst(wxT(','));
+            piece.BeforeFirst(wxT(',')).ToLong(&layer);
+            piece.AfterFirst(wxT(',')).ToLong(&row);
+            value.ToLong(&size);
+
+            wxAuiDockInfo dock;
+            dock.dock_direction = dir;
+            dock.dock_layer = layer;
+            dock.dock_row = row;
+            dock.size = size;
+            // Disabled for notebook, not clear if it's needed.
+            //m_docks.Add(dock);
+            continue;
+        }
+
+        // Undo our escaping as LoadPaneInfo needs to take an unescaped
+        // name so it can be called by external callers
+        pane_part.Replace(wxT("\a"), wxT("|"));
+        pane_part.Replace(wxT("\b"), wxT(";"));
+
+        m_mgr.LoadPaneInfo(pane_part, pane);
+
+        // Disabled for notebook, not clear if it's needed.
+        //if (pane.IsMaximized())
+        //    m_hasMaximized = true;
+        result.push_back(pane);
+    }
+
+
+    return result;
+}
+
+bool wxAuiNotebook::LoadPerspective(const wxString& perspective)
+{   
+    wxString log;
+    wxString tabs = perspective.BeforeFirst(wxT('@'));
+    wxString panes = perspective.AfterFirst(wxT('@'));
+    int numPanes = 0;
+
+    auto paneInfo = GetPaneInfo(perspective);
+    // Remove all tab ctrls (but still keep them in main index)
+    const size_t tab_count = m_tabs.GetPageCount();
+    for (size_t i = 0; i < tab_count; ++i) {
+        wxWindow* wnd = m_tabs.GetWindowFromIdx(i);
+
+        // find out which onscreen tab ctrl owns this tab
+        wxAuiTabCtrl* ctrl;
+        int ctrl_idx;
+        if (!FindTab(wnd, &ctrl, &ctrl_idx)) {
+            log += wxString::Format("ERROR: Could not FindTab for window %p, Exiting...", (void*)wnd);
+            wxLogError(log);
+            return false;
+        }
+
+        // remove the tab from ctrl
+        if (!ctrl->RemovePage(wnd)) {
+            log += wxString::Format("ERROR: Could not remove window %p from tab ctrl %p, Exiting...", (void*)wnd, (void*)ctrl);
+            wxLogError(log);
+            return false;
+        }
+
+        //log += wxString::Format("Removed window %p from wxAuiTabCtrl %p (Index %d)\n", (void*)wnd, (void*)ctrl, ctrl_idx);
+    }
+    RemoveEmptyTabFrames(); // this detaches the panes from the manager
+    
+    size_t sel_page = 0;
+    while (1)
+    {
+        const wxString tab_part = tabs.BeforeFirst(wxT('|'));
+
+        // if the string is empty, we're done parsing
+        if (tab_part.empty())
+            break;
+
+        // Get pane name
+        const wxString pane_name = tab_part.BeforeFirst(wxT('='));
+
+        // look up the pane info
+        auto it = std::find_if(paneInfo.begin(), paneInfo.end(), [pane_name](const wxAuiPaneInfo& pane) { return pane.name == pane_name; });
+        if (it == paneInfo.end()) {
+            wxLogError("No pane info found for %s", pane_name);
+            continue;
+        }
+        numPanes++;
+        wxAuiPaneInfo& pane = *it;
+        // create a new tab frame
+        wxTabFrame* new_tabs = new wxTabFrame;
+        new_tabs->
+            m_tabs = new wxAuiTabCtrl(this,
+                m_tabIdCounter++,
+                wxDefaultPosition,
+                pane.best_size,
+                wxNO_BORDER | wxWANTS_CHARS);
+        new_tabs->m_tabs->SetArtProvider(m_tabs.GetArtProvider()->Clone());
+        new_tabs->SetTabCtrlHeight(m_tabCtrlHeight);
+        new_tabs->m_tabs->SetFlags(m_flags);
+        wxAuiTabCtrl* dest_tabs = new_tabs->m_tabs;
+        new_tabs->Show(true);
+
+
+        pane.window = new_tabs;
+        m_mgr.AddPane(new_tabs, pane);
+
+        //log += wxString::Format("Pane %d: %s: \n\tCreated a new wxTabFrame and add it to my Manager, save a ref to the wxAuiTabCtrl: %p\n", numPanes, pane_name, (void*)dest_tabs);
+
+        // Get list of tab id's and move them to pane
+        wxString tab_list = tab_part.AfterFirst(wxT('='));
+        int numTabs = 0;
+        while (1) {
+            wxString tab = tab_list.BeforeFirst(wxT(','));
+            if (tab.empty()) break;
+            tab_list = tab_list.AfterFirst(wxT(','));
+            numTabs++;
+
+            // Check if this page has an 'active' (+) or 'selected' (*) marker
+            const wxChar c = tab[0];
+            bool selected = false;
+
+            if (c == wxT('+')) {
+                tab = tab.Mid(1); // we don't really care about this flag, just get the tab index
+            }
+            else if (c == wxT('*')) {
+                tab = tab.Mid(1);
+                selected = true;
+                pane.SetFlag(wxAuiPaneInfo::optionActive, true);
+            }
+
+            const size_t tab_idx = wxAtoi(tab.c_str());
+            if (tab_idx >= GetPageCount()) continue;
+
+            // Move tab to pane
+            wxAuiNotebookPage& page = m_tabs.GetPage(tab_idx);
+            if (selected) {
+                page.active = true;
+                sel_page = tab_idx;
+            }
+
+            const size_t newpage_idx = dest_tabs->GetPageCount();
+            dest_tabs->InsertPage(page.window, page, newpage_idx);
+
+            //plan += wxString::Format("\t wxAuiNotebookPage %d: %s (Index %d%s)\n", numTabs, page.caption, (int)tab_idx, active ? ", active" : "");
+            //log += wxString::Format("\t Inserted window %p into the wxAuiTabCtrl %p\n", (void*)page.window, (void*)dest_tabs);
+        }
+        dest_tabs->DoShowHide();
+
+        tabs = tabs.AfterFirst(wxT('|'));
+    }
+
+
+    m_mgr.Update();
+    SetSelection(sel_page);
+    Refresh();
+    
+    //log += "Updated Manager. Done!\n";
+    //wxLogDebug(log, "Log of loading Perspective");
+    return true;
+}
+
 // InitNotebook() contains common initialization
 // code called by all constructors
 void wxAuiNotebook::InitNotebook(long style)
@@ -2769,18 +3020,19 @@ void wxAuiNotebook::OnTabEndDrag(wxAuiNotebookEvent& evt)
 
             // If there is no tabframe at all, create one
             wxTabFrame* new_tabs = new wxTabFrame;
-            new_tabs->m_rect = wxRect(wxPoint(0,0), CalculateNewSplitSize());
+            wxSize splitSize = CalculateNewSplitSize();
+            new_tabs->m_rect = wxRect(wxPoint(0,0), splitSize);
             new_tabs->SetTabCtrlHeight(m_tabCtrlHeight);
             new_tabs->m_tabs = new wxAuiTabCtrl(this,
                                                 m_tabIdCounter++,
                                                 wxDefaultPosition,
-                                                wxDefaultSize,
+                                                 splitSize,
                                                 wxNO_BORDER|wxWANTS_CHARS);
             new_tabs->m_tabs->SetArtProvider(m_tabs.GetArtProvider()->Clone());
             new_tabs->m_tabs->SetFlags(m_flags);
 
             m_mgr.AddPane(new_tabs,
-                          wxAuiPaneInfo().Bottom().CaptionVisible(false),
+                          wxAuiPaneInfo().Bottom().CaptionVisible(false).BestSize(splitSize),
                           mouse_client_pt);
             m_mgr.Update();
             dest_tabs = new_tabs->m_tabs;
@@ -3551,14 +3803,17 @@ int wxAuiNotebook::DoModifySelection(size_t n, bool events)
                 wxAuiTabCtrl* tabctrl = ((wxTabFrame*)pane.window)->m_tabs;
                 if (tabctrl != ctrl) {
                     tabctrl->SetSelectedFont(m_normalFont);
+                    tabctrl->SetPaneActive(false);
                     // mark the pages in the non-active tabCtrl as non-active
                     wxAuiNotebookPageArray& tabs = tabctrl->GetPages();
                     for (wxAuiNotebookPage& tab : tabs) {
                         tab.active = false;
                     }
                 }
-                else
+                else {
                     tabctrl->SetSelectedFont(m_selectedFont);
+                    tabctrl->SetPaneActive(true);
+                }
                 tabctrl->Refresh();
             }
 

@@ -429,9 +429,7 @@ public:
                 long style = 0);
 
     virtual wxString SavePerspective(); // should really be const, but involves many changes in framemanager
-    bool PlanLoadPerspective(const wxString& layout);
-    std::vector<wxAuiPaneInfo> LoadPerspectivePanes(const wxString& layout);
-    virtual bool LoadPerspective(const wxString& layout);
+    virtual bool LoadPerspective(const wxString& perspective);
 
     void SetWindowStyleFlag(long style) override;
     void SetArtProvider(wxAuiTabArt* art);
@@ -552,6 +550,8 @@ protected:
     //A general selection function
     virtual int DoModifySelection(size_t n, bool events);
 
+    // load information about panes from a saved notebook perspective string
+    std::vector<wxAuiPaneInfo> GetPaneInfo(const wxString& perspective);
 protected:
 
     void DoSizing();
