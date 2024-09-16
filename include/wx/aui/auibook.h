@@ -176,6 +176,11 @@ public:
     // Make the tab visible if it wasn't already
     void MakeTabVisible(int tabPage, wxWindow* win);
 
+    // Check if this tab container is in the currently active AUI pane
+    bool IsPaneActive() const { return m_paneActive; }
+
+    // Set information that this tab container is in the currently active AUI pane
+    void SetPaneActive(bool isActive)  { m_paneActive = isActive; }
 protected:
 
     virtual void Render(wxDC* dc, wxWindow* wnd);
@@ -189,6 +194,7 @@ protected:
     wxRect m_rect;
     size_t m_tabOffset;
     unsigned int m_flags;
+    bool m_paneActive = false;
 
 private:
     int GetCloseButtonState(const wxAuiNotebookPage& page) const;
@@ -421,6 +427,11 @@ public:
                 const wxPoint& pos = wxDefaultPosition,
                 const wxSize& size = wxDefaultSize,
                 long style = 0);
+
+    virtual wxString SavePerspective(); // should really be const, but involves many changes in framemanager
+    bool PlanLoadPerspective(const wxString& layout);
+    std::vector<wxAuiPaneInfo> LoadPerspectivePanes(const wxString& layout);
+    virtual bool LoadPerspective(const wxString& layout);
 
     void SetWindowStyleFlag(long style) override;
     void SetArtProvider(wxAuiTabArt* art);
